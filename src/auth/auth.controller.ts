@@ -1,20 +1,24 @@
 import {
   BadRequestException,
   Body,
+  ClassSerializerInterceptor,
   Controller,
   Get,
   HttpStatus,
-  Post, Req,
+  Post,
   Res,
-  UnauthorizedException
+  UnauthorizedException,
+  UseInterceptors
 } from "@nestjs/common";
-import { Request, Response } from "express";
+import { Response } from "express";
 import { LoginDTO, RegisterDTO } from "@auth/dto";
 import { AuthService } from "@auth/auth.service";
 import { Tokens } from "@auth/interfaces";
 import { ConfigService } from "@nestjs/config";
-import { Cookie, UserAgent } from "@shared/decorators";
+import { Cookie, PublicRoute, UserAgent } from "@shared/decorators";
+import { UserResponseDTO } from "@user/dto";
 
+@PublicRoute()
 @Controller("auth")
 export class AuthController {
   constructor(
@@ -22,14 +26,17 @@ export class AuthController {
     private readonly configService: ConfigService
   ) {}
 
+  @UseInterceptors(ClassSerializerInterceptor)
   @Post("register")
   public async register(
     @Body() dto: RegisterDTO
-  ) {
+  ): Promise<UserResponseDTO> {
     const user = await this.authService.register(dto);
     if (!user) {
       throw new BadRequestException("Не удалось зарегистрировать пользователя");
     }
+
+    return new UserResponseDTO(user);
   }
 
   @Post("login")
@@ -37,9 +44,8 @@ export class AuthController {
     @Body() dto: LoginDTO,
     @Res() res: Response,
     @UserAgent() agent: string
-  ) {
-    // const agent = req.headers['user-agent']
-    const tokens = await this.authService.login(dto);
+  ): Promise<void> {
+    const tokens = await this.authService.login(dto, agent);
     if (!tokens) {
       throw new BadRequestException("Не удалось авторизовать пользователя");
     }
@@ -47,8 +53,8 @@ export class AuthController {
     this.setRefreshTokenToCookies(tokens, res);
   }
 
-  @Get("refresh-tokens")
-  public async refreshTokens(
+  @Get("logout")
+  public async logout(
     @Cookie("Refresh-Token") refreshToken: string,
     @Res() res: Response
   ) {
@@ -56,7 +62,23 @@ export class AuthController {
       throw new UnauthorizedException();
     }
 
-    const tokens = await this.authService.refreshTokens(refreshToken);
+    await this.authService.logout(refreshToken);
+
+    res.cookie("Refresh-Token", "", { httpOnly: true, expires: new Date(), secure: true });
+    res.sendStatus(HttpStatus.OK);
+  }
+
+  @Get("refresh-tokens")
+  public async refreshTokens(
+    @Cookie("Refresh-Token") refreshToken: string,
+    @Res() res: Response,
+    @UserAgent() agent: string
+  ): Promise<void> {
+    if (!refreshToken) {
+      throw new UnauthorizedException();
+    }
+
+    const tokens = await this.authService.refreshTokens(refreshToken, agent);
     if (!tokens) {
       throw new UnauthorizedException();
     }
@@ -67,7 +89,7 @@ export class AuthController {
   private setRefreshTokenToCookies(
     tokens: Tokens,
     res: Response
-  ) {
+  ): void {
     if (!tokens) {
       throw new UnauthorizedException();
     }
