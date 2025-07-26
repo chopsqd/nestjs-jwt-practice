@@ -17,23 +17,39 @@ export class UserService {
     private readonly configService: ConfigService,
   ) {}
 
-  private hashPassword(password: string) {
+  private hashPassword(password: string): string {
     return hashSync(password, genSaltSync(10));
   }
 
-  public save(user: Pick<User, "email" | "password">) {
-    const hashedPassword = this.hashPassword(user.password);
-
-    return this.prismaService.user.create({
-      data: {
+  public async save(user: Partial<User> & Pick<User, "email">): Promise<User> {
+    const hashedPassword = user?.password ? this.hashPassword(user.password) : null;
+    const savedUser = await this.prismaService.user.upsert({
+      where: {
+        email: user.email,
+      },
+      update: {
+        password: hashedPassword,
+        provider: user?.provider,
+        roles: user?.roles,
+        isBlocked: user?.isBlocked,
+      },
+      create: {
         email: user.email,
         password: hashedPassword,
-        roles: ["USER"]
-      }
+        provider: user?.provider,
+        roles: ['USER'],
+      },
     });
+
+    await Promise.all([
+      this.cacheManager.set(savedUser.id, savedUser),
+      this.cacheManager.set(savedUser.email, savedUser)
+    ]);
+
+    return savedUser;
   }
 
-  public async findOne(idOrEmail: string, isReset: boolean = false) {
+  public async findOne(idOrEmail: string, isReset: boolean = false): Promise<User | null> {
     if (isReset) {
       await this.cacheManager.del(idOrEmail)
     }
@@ -61,7 +77,7 @@ export class UserService {
     return cacheUser;
   }
 
-  public async delete(id: string, user: JwtPayload) {
+  public async delete(id: string, user: JwtPayload): Promise<User> {
     if (user.id !== id && !user.roles.includes(Role.ADMIN)) {
       throw new ForbiddenException();
     }

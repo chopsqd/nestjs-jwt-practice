@@ -1,10 +1,18 @@
-import { ConflictException, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  UnauthorizedException
+} from "@nestjs/common";
 import { LoginDTO, RegisterDTO } from "@auth/dto";
 import { UserService } from "@user/user.service";
 import { Tokens } from "@auth/interfaces";
 import { compareSync } from "bcrypt";
 import { JwtService } from "@nestjs/jwt";
-import { Token, User } from "@generated/prisma";
+import { Provider, Token, User } from "@generated/prisma";
 import { PrismaService } from "@prisma/prisma.service";
 import { v4 } from "uuid";
 import { add } from "date-fns";
@@ -17,23 +25,28 @@ export class AuthService {
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly prismaService: PrismaService
-  ) {
-  }
+  ) {}
 
-  public async register(dto: RegisterDTO) {
-    const user = await this.userService.findOne(dto.email).catch(err => {
+  public async register(dto: RegisterDTO): Promise<User> {
+    const existingUser = await this.userService.findOne(dto.email).catch(err => {
       this.logger.error(err);
       return null;
     });
 
-    if (user) {
+    if (existingUser) {
       throw new ConflictException("Пользователь с таким email уже существует");
     }
 
-    return this.userService.save(dto).catch(err => {
+    const newUser = await this.userService.save(dto).catch(err => {
       this.logger.error(err);
       return null;
     });
+
+    if (!newUser) {
+      throw new BadRequestException("Не удалось зарегистрировать пользователя");
+    }
+
+    return newUser;
   }
 
   public async login(dto: LoginDTO, agent: string): Promise<Tokens> {
@@ -42,7 +55,7 @@ export class AuthService {
       return null;
     });
 
-    if (!user || !compareSync(dto.password, user.password)) {
+    if (!user || !user.password || !compareSync(dto.password, user.password)) {
       throw new UnauthorizedException("Не верный логин или пароль");
     }
 
@@ -62,7 +75,7 @@ export class AuthService {
   }
 
   public async refreshTokens(refreshToken: string, agent: string): Promise<Tokens> {
-    const token = await this.prismaService.token.findUnique({
+    const token = await this.prismaService.token.delete({
       where: { token: refreshToken }
     });
 
@@ -70,11 +83,29 @@ export class AuthService {
       throw new UnauthorizedException("Токен недействителен или истёк");
     }
 
-    await this.prismaService.token.delete({ where: { token: refreshToken } });
-
     const user = await this.userService.findOne(token.userId);
     if (!user) {
       throw new UnauthorizedException("Пользователь не найден");
+    }
+
+    return this.generateTokens(user, agent);
+  }
+
+  public async providerAuth(email: string, agent: string, provider: Provider): Promise<Tokens> {
+    const user = await this.prismaService.user.upsert({
+      where: { email },
+      update: { provider }, // Обновляем провайдер если пользователь существует
+      create: { email, provider } // Создаем если не существует
+    }).catch(err => {
+      this.logger.error(err);
+      return null;
+    });
+
+    if (!user) {
+      throw new HttpException(
+        `Не удалось войти через ${provider} Auth`,
+        HttpStatus.BAD_REQUEST
+      );
     }
 
     return this.generateTokens(user, agent);

@@ -9,7 +9,7 @@ import { GUARDS } from "@auth/guards";
 @Module({
   imports: [UserModule, PrismaModule, AuthModule, ConfigModule.forRoot({ isGlobal: true })],
   providers: [
-    { provide: APP_GUARD, useClass: GUARDS[0] }
+    { provide: APP_GUARD, useClass: GUARDS.JwtAuthGuard }
   ]
 })
 export class AppModule {}

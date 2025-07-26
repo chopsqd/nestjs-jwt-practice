@@ -1,17 +1,18 @@
 import {
-  BadRequestException,
+  BadRequestException, Body,
   ClassSerializerInterceptor,
   Controller,
   Delete,
   Get,
   Param,
-  ParseUUIDPipe,
+  ParseUUIDPipe, Put,
   UseInterceptors
 } from "@nestjs/common";
 import { CurrentUser } from "@shared/decorators";
 import { UserService } from "@user/user.service";
 import { UserResponseDTO } from "@user/dto";
 import { JwtPayload } from "@auth/interfaces";
+import { User } from "@generated/prisma";
 
 @Controller("user")
 export class UserController {
